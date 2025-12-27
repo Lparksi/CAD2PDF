@@ -25,16 +25,10 @@
 #include <memory>
 #include <set>
 
-#include <QApplication>
 #include <QCoreApplication>
 #include <QImageWriter>
 #include <QtCore>
 #include <QtSvg>
-
-#include "main.h"
-
-#include "qc_applicationwindow.h"
-#include "qg_dialogfactory.h"
 
 #include "lc_actionfileexportmakercam.h"
 #include "lc_documentsstorage.h"
@@ -98,7 +92,7 @@ int console_dxf2png(int argc, char* argv[])
 {
     RS_DEBUG->setLevel(RS_Debug::D_NOTHING);
 
-    QApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
     QCoreApplication::setOrganizationName("LibreCAD");
     QCoreApplication::setApplicationName("LibreCAD");
     QCoreApplication::setApplicationVersion(XSTR(LC_VERSION));
