@@ -1,0 +1,208 @@
+name: Build CLI Tools
+on:
+  push:
+    branches:
+      - master
+      - feature/headless-cli
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  BuildLinux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -qq install cmake ninja-build
+          sudo apt-get -qq install qt6-base-dev qt6-svg-dev libqt6svg6-dev
+          sudo apt-get -qq install libmuparser-dev libboost-dev libfreetype6-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build -j$(nproc)
+
+      - name: Package
+        run: |
+          cd build
+          strip dxf2pdf dxf2png dxf2svg || true
+          tar -czf CAD2PDF-Linux-x64.tar.gz dxf2pdf dxf2png dxf2svg
+          mv CAD2PDF-Linux-x64.tar.gz ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAD2PDF-Linux-x64
+          path: CAD2PDF-Linux-x64.tar.gz
+          retention-days: 7
+
+  BuildMacOS:
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.*'
+          modules: 'qtsvg'
+
+      - name: Install dependencies
+        run: |
+          brew install boost cmake ninja
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Package
+        run: |
+          cd build
+          strip dxf2pdf dxf2png dxf2svg || true
+          tar -czf CAD2PDF-macOS-arm64.tar.gz dxf2pdf dxf2png dxf2svg
+          mv CAD2PDF-macOS-arm64.tar.gz ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAD2PDF-macOS-arm64
+          path: CAD2PDF-macOS-arm64.tar.gz
+          retention-days: 7
+
+  BuildWindows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.*'
+          host: 'windows'
+          arch: 'win64_msvc2022_64'
+          target: 'desktop'
+          modules: 'qtsvg'
+          tools: 'tools_cmake tools_ninja'
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install Boost
+        run: |
+          curl -# -L -o boost.7z https://archives.boost.io/release/1.87.0/source/boost_1_87_0.7z
+          7z x -o. -y boost.7z
+          mkdir -p boost/include
+          mv boost_1_87_0/boost boost/include/
+          rm boost.7z
+        shell: bash
+
+      - name: Configure CMake
+        run: |
+          cmake.exe -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBoost_INCLUDE_DIR=%BOOST_ROOT%/include
+        shell: cmd
+        env:
+          BOOST_ROOT: boost
+
+      - name: Build
+        run: |
+          cmake --build build --config Release
+        shell: cmd
+
+      - name: Deploy Qt dependencies
+        run: |
+          cd build
+          windeployqt6.exe --release --no-translations --no-opengl-sw dxf2pdf.exe
+          windeployqt6.exe --release --no-translations --no-opengl-sw dxf2png.exe
+          windeployqt6.exe --release --no-translations --no-opengl-sw dxf2svg.exe
+        shell: cmd
+
+      - name: Package
+        run: |
+          cd build
+          7z a -tzip CAD2PDF-Windows-x64.zip dxf2pdf.exe dxf2png.exe dxf2svg.exe *.dll
+          mv CAD2PDF-Windows-x64.zip ..
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAD2PDF-Windows-x64
+          path: CAD2PDF-Windows-x64.zip
+          retention-days: 7
+
+  CreateRelease:
+    if: github.ref == 'refs/heads/master' && github.repository_owner == 'LibreCAD'
+    needs: [BuildLinux, BuildMacOS, BuildWindows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete existing release
+        run: gh release delete "cli-latest" -y || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "CAD2PDF CLI Tools: Latest Build"
+          tag_name: "cli-latest"
+          prerelease: true
+          draft: false
+          body: |
+            ## CAD2PDF 命令行工具
+
+            精简版LibreCAD，仅包含DXF/DWG到PDF/PNG/SVG的转换功能。
+
+            ### 使用方法
+
+            #### PDF转换
+            ```bash
+            dxf2pdf input.dxf -o output.pdf -a -c -p A4
+            ```
+
+            #### PNG转换
+            ```bash
+            dxf2png input.dxf -o output.png -r 2000x1000
+            ```
+
+            #### SVG转换
+            ```bash
+            dxf2svg input.dxf -o output.svg
+            ```
+
+            ### 下载说明
+            - **Linux**: 解压后直接运行
+            - **macOS**: 解压后可能需要 `chmod +x dxf2*`
+            - **Windows**: 解压到任意目录，包含所需DLL
+          files: |
+            CAD2PDF-Linux-x64/CAD2PDF-Linux-x64.tar.gz
+            CAD2PDF-macOS-arm64/CAD2PDF-macOS-arm64.tar.gz
+            CAD2PDF-Windows-x64/CAD2PDF-Windows-x64.zip
+            LICENSE
